@@ -23,20 +23,24 @@ create table if not exists public.profiles (
 );
 
 -- auto-create profile on signup
+-- (the admin email gets role='admin' + VIP crown badge automatically)
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
 security definer set search_path = public
 as $$
 declare
-  admin_email text := nullif(current_setting('app.admin_email', true), '');
+  admin_email text := coalesce(nullif(current_setting('app.admin_email', true), ''), 'admin@aminul.com');
+  is_admin boolean := new.email is not null and lower(new.email) = lower(admin_email);
 begin
-  insert into public.profiles (id, email, display_name, role)
+  insert into public.profiles (id, email, display_name, role, badge)
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1), 'New User'),
-    case when new.email is not null and lower(new.email) = lower(admin_email) then 'admin' else 'user' end
+    case when is_admin then 'Aminul (Admin)'
+         else coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1), 'New User') end,
+    case when is_admin then 'admin' else 'user' end,
+    case when is_admin then 'vip' else 'none' end
   )
   on conflict (id) do nothing;
   return new;
@@ -341,20 +345,243 @@ create policy "media own delete" on storage.objects
   for delete using (bucket_id = 'media' and owner = auth.uid());
 
 -- ============================================================
--- PROMOTE ADMIN (idempotent): sets admin@aminul.com as admin
+-- TURN credentials — pure SQL setup (no CLI, no edge function)
 -- ============================================================
-update public.profiles
-set role = 'admin', badge = 'vip'
-where lower(email) = 'admin@aminul.com';
+-- How it works:
+--   1. The Cloudflare TURN Token ID + API Token are stored in a PRIVATE
+--      table (private.turn_config) that clients can never read.
+--   2. generate_ice_servers() is a security-definer RPC that calls the
+--      Cloudflare API server-side and returns short-lived iceServers.
+--   3. If the tokens are not filled in yet, it returns public STUN fallback
+--      so calls still work (same-NAT / P2P).
+--
+-- Fill in your real API token below (TURN_TOKEN_ID is already set):
+--   >> Replace CHANGE_ME with the Cloudflare API Token <<
 
--- fallback: if the admin user hasn't signed up yet, create the auth user
--- (password: 11223345 — change after first login)
+do $$ begin create extension if not exists http;  exception when others then null; end $$;
+do $$ begin create extension if not exists pg_net; exception when others then null; end $$;
+
+create schema if not exists private;
+revoke all on schema private from anon, authenticated;
+
+create table if not exists private.turn_config (
+  id int primary key default 1 check (id = 1),
+  key_id text,
+  secret text,
+  ice_cache jsonb,
+  ice_cached_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+insert into private.turn_config (id, key_id, secret)
+values (1, 'd0e047d1b08e5318b0edd6d1ecaea3e2', null)
+on conflict (id) do nothing;
+
+-- If the secret is stored in Vault (Dashboard → Vault), it is read from there.
+-- Prefer this (better than plain text below): secrets → name = TURN_API_TOKEN
+-- Or paste it directly in the update at the bottom of this file.
+
+-- Single HTTP POST helper: tries the `http` extension first, falls back to pg_net.
 do $$
 declare
-  uid uuid;
+  has_http boolean;
+  has_net boolean;
 begin
-  if exists (select 1 from auth.users where lower(email) = 'admin@aminul.com') then
-    select id into uid from auth.users where lower(email) = 'admin@aminul.com' limit 1;
-    update public.profiles set role = 'admin', badge = 'vip' where id = uid;
+  select exists(select 1 from pg_extension where extname = 'http') into has_http;
+  select exists(select 1 from pg_extension where extname = 'pg_net') into has_net;
+
+  if has_http then
+    execute $fn$
+      create or replace function public._cf_request(p_url text, p_token text, p_body jsonb)
+      returns jsonb language plpgsql volatile as $body$
+      declare r record;
+      begin
+        select * into r from http(
+          ('POST', p_url, jsonb_build_object('Authorization','Bearer '||p_token), 'application/json', p_body::text)::http_request
+        );
+        if r.status between 200 and 299 then
+          return r.content::jsonb;
+        end if;
+        return null;
+      exception when others then return null;
+      end $body$;
+    $fn$;
+  elsif has_net then
+    execute $fn$
+      create or replace function public._cf_request(p_url text, p_token text, p_body jsonb)
+      returns jsonb language plpgsql volatile as $body$
+      declare req bigint; rec record; tries int := 0;
+      begin
+        select net.http_post(
+          url := p_url,
+          headers := jsonb_build_object('Authorization','Bearer '||p_token,'Content-Type','application/json'),
+          body := p_body
+        ) into req;
+        while tries < 50 loop
+          perform pg_sleep(0.1);
+          select * into rec from net._http_response where id = req;
+          exit when found and rec.status_code is not null;
+          tries := tries + 1;
+        end loop;
+        if rec.status_code between 200 and 299 then
+          return rec.content::jsonb;
+        end if;
+        return null;
+      exception when others then return null;
+      end $body$;
+    $fn$;
+  else
+    execute $fn$
+      create or replace function public._cf_request(p_url text, p_token text, p_body jsonb)
+      returns jsonb language plpgsql volatile as $body$
+      begin return null; end $body$;
+    $fn$;
   end if;
 end $$;
+
+-- Main RPC used by the app (src/lib/turn.ts → supabase.rpc('generate_ice_servers'))
+create or replace function public.generate_ice_servers(p_ttl int default 86400)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = public, extensions, net, vault
+as $$
+declare
+  v_uid uuid := auth.uid();
+  v_key_id text;
+  v_api text;
+  v_resp jsonb;
+  v_servers jsonb;
+  v_cfg record;
+  v_fallback jsonb := jsonb_build_object('iceServers', jsonb_build_array(
+    jsonb_build_object('urls', jsonb_build_array('stun:stun.l.google.com:19302')),
+    jsonb_build_object('urls', jsonb_build_array('stun:stun1.l.google.com:19302')),
+    jsonb_build_object('urls', jsonb_build_array('stun:stun2.l.google.com:19302')),
+    jsonb_build_object('urls', jsonb_build_array('stun:stun.services.mozilla.com:3478')),
+    jsonb_build_object('urls', jsonb_build_array('stun:stun.l.google.com:5349'))
+  ));
+begin
+  if v_uid is null then
+    raise exception 'authentication required';
+  end if;
+  if p_ttl is null or p_ttl < 60 or p_ttl > 86400 then
+    p_ttl := 86400;
+  end if;
+
+  select * into v_cfg from private.turn_config where id = 1;
+  v_key_id := v_cfg.key_id;
+  v_api := coalesce(v_cfg.secret, '');
+
+  -- If no plain secret stored, try Vault (name = TURN_API_TOKEN)
+  if v_api = '' and v_key_id is not null then
+    begin
+      select decrypted_secret into v_api
+      from vault.decrypted_secrets
+      where name = 'TURN_API_TOKEN'
+      limit 1;
+    exception when others then v_api := '';
+    end;
+  end if;
+
+  -- Tokens not configured yet → STUN-only fallback (P2P still works)
+  if coalesce(v_key_id, '') = '' or coalesce(v_api, '') = '' then
+    return v_fallback;
+  end if;
+
+  -- Serve a fresh cache for 23h (Cloudflare ttl max is 24h) — saves cost & latency
+  if v_cfg.ice_cached_at is not null
+     and v_cfg.ice_cache is not null
+     and v_cfg.ice_cached_at > now() - interval '23 hours' then
+    return v_cfg.ice_cache;
+  end if;
+
+  v_resp := public._cf_request(
+    'https://rtc.live.cloudflare.com/v1/turn/keys/' || v_key_id || '/credentials/generate-ice-servers',
+    v_api,
+    jsonb_build_object('ttl', p_ttl)
+  );
+
+  if v_resp is not null and v_resp ? 'iceServers' then
+    v_servers := v_resp;
+    update private.turn_config
+    set ice_cache = v_servers, ice_cached_at = now(), updated_at = now()
+    where id = 1;
+    return v_servers;
+  end if;
+
+  -- Cloudflare unreachable / auth failed → fallback (do not cache)
+  return v_fallback;
+end;
+$$;
+
+revoke execute on function public.generate_ice_servers(int) from anon;
+grant execute on function public.generate_ice_servers(int) to authenticated;
+
+-- ============================================================
+-- ADMIN AUTO-CREATION (idempotent — runs at the end of this script)
+-- ============================================================
+-- Creates admin@aminul.com / 1234 if it does not exist yet, confirms the
+-- email, and gives the profile: username 'admin', VIP crown badge, full
+-- admin powers. The admin can chat & call exactly like a normal user and
+-- edit their own profile — everyone just sees the 👑 crown on their name.
+create or replace function public.ensure_admin_user()
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_email text := 'admin@aminul.com';
+  v_pass text := '1234';
+  v_uid uuid;
+begin
+  select id into v_uid from auth.users where lower(email) = v_email limit 1;
+
+  if v_uid is null then
+    insert into auth.users (
+      instance_id, aud, role, email, encrypted_password,
+      email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+      created_at, updated_at,
+      confirmation_token, recovery_token, email_change, email_change_token_new
+    ) values (
+      '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+      v_email, crypt(v_pass, gen_salt('bf')),
+      now(), '{"provider":"email","providers":["email"]}',
+      '{"display_name":"Aminul (Admin)"}',
+      now(), now(), '', '', '', ''
+    )
+    returning id into v_uid;
+
+    insert into auth.identities (
+      id, user_id, provider_id, identity_data, last_sign_in_at, created_at, updated_at
+    ) values (
+      gen_random_uuid(), v_uid, 'email',
+      jsonb_build_object('sub', v_uid::text, 'email', v_email, 'email_verified', true),
+      now(), now(), now()
+    )
+    on conflict do nothing;
+  end if;
+
+  -- Full profile with every detail pre-filled
+  begin
+    insert into public.profiles (id, username, display_name, email, role, status, badge, bio, avatar_url, phone, gender)
+    values (
+      v_uid, 'admin', 'Aminul (Admin)', v_email, 'admin', 'active', 'vip',
+      'My Chat 24 administrator 👑', null, null, null
+    );
+  exception when unique_violation then
+    null; -- username 'admin' taken or profile exists — fall through to update
+  end;
+
+  update public.profiles
+  set role = 'admin', status = 'active', email = v_email,
+      badge = case when badge = 'none' then 'vip' else badge end,
+      username = case when username like 'user\_%' then 'admin' else username end
+  where id = v_uid;
+
+  return v_uid;
+end;
+$$;
+
+select public.ensure_admin_user();

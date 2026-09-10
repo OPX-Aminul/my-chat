@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import {
   FALLBACK_ICE_SERVERS,
   type CallRecord,
@@ -99,6 +100,23 @@ export function useCallEngine(myId: string | null) {
     }
   }
 
+  function fireCallNotification(callerName: string, type: CallType) {
+    try {
+      LocalNotifications.schedule({
+        notifications: [
+          {
+            id: Math.floor(Math.random() * 2_000_000_000),
+            title: `Incoming ${type} call 📞`,
+            body: `${callerName} is calling you on My Chat 24`,
+            schedule: { at: new Date(Date.now() + 200) },
+          },
+        ],
+      }).catch(() => {});
+    } catch {
+      /* web */
+    }
+  }
+
   // ---- listen for incoming calls -------------------------------------
   useEffect(() => {
     if (!myId) return;
@@ -115,6 +133,7 @@ export function useCallEngine(myId: string | null) {
           if (!caller) return;
           setIncoming({ call, caller });
           playRing();
+          fireCallNotification(caller.display_name, call.call_type);
           // auto-miss after 45s
           setTimeout(() => {
             setIncoming((cur) => {
@@ -146,6 +165,7 @@ export function useCallEngine(myId: string | null) {
         if (caller) {
           setIncoming((cur) => cur ?? { call, caller });
           playRing();
+          fireCallNotification(caller.display_name, call.call_type);
         }
       }
     }, 10_000);

@@ -12,6 +12,8 @@
 - 📞 **Calls** — WebRTC audio/video with STUN (Google) + **Cloudflare TURN** short-lived credentials (edge function)
 - 🛡 **Admin panel** — three-dot menu → Admin panel (admin email only):
   view all users, monitor all chats, set 5 badge types (Verified, Pro, VIP, Premium, Moderator), ban/unban, promote/demote admins
+- 👑 **Admin everywhere** — admin chats/calls like a normal user; everyone sees a golden crown next to their name
+- 🔔 **Background notifications** — messages & incoming calls raise local notifications on Android even when the app is in recents
 - 📱 **Android APK** — Capacitor-based, auto-built and released on every push via GitHub Actions
 
 ## 🚀 Quick start
@@ -24,7 +26,8 @@ bun run dev
 The Supabase URL and anon key are baked in. Create the database schema once:
 
 1. Open your Supabase project → **SQL Editor**
-2. Paste the full contents of [`supabase/schema.sql`](supabase/schema.sql) and run it
+2. Paste the full contents of [`supabase/schema.sql`](supabase/schema.sql) and run it — this
+   also auto-creates the admin account and the TURN RPC in one shot
 3. Reload the app — the "Database setup needed" notice disappears
 
 ### Admin account
@@ -38,20 +41,29 @@ profile to admin + VIP badge). Default admin password set at signup: change it a
 "Contacts" are any My Chat 24 users you add by @username or phone — their profiles appear in
 your contact list automatically (avatar, name, badge, online status).
 
-## 📞 TURN / STUN configuration
+## 📞 TURN / STUN configuration (SQL Editor only — no CLI)
 
-Calls use short-lived Cloudflare TURN credentials generated **server-side**:
+Everything lives in `supabase/schema.sql`. When you run it in the Supabase SQL Editor it also:
 
-1. Deploy the edge function once:
-   ```bash
-   supabase functions deploy get-ice-servers
-   supabase secrets set TURN_TOKEN_ID=d0e047d1b08e5318b0edd6d1ecaea3e2
-   supabase secrets set TURN_API_TOKEN=<your API token>
-   ```
-2. The app calls the edge function on every call start (`src/lib/turn.ts`), falls back to
-   public Google STUN servers if the function or secrets are unavailable.
+1. Stores the TURN Token ID in a **private** table (`private.turn_config`) clients can't read
+2. Creates a `generate_ice_servers()` RPC that calls Cloudflare server-side and returns
+   short-lived credentials (with a 23h cache to save cost)
+3. Falls back to public STUN automatically if the API token isn't set yet
 
-Never ship the Cloudflare API token to the browser — that's why credentials are minted in the edge function.
+**One manual step:** open the SQL Editor and run (replace `CHANGE_ME` with your Cloudflare API token):
+
+```sql
+update private.turn_config set secret = 'CHANGE_ME' where id = 1;
+```
+
+Or, even better, store it in Vault: Dashboard → Vault → Secrets → name `TURN_API_TOKEN` — the RPC picks it up automatically. The Cloudflare API token never reaches the browser either way.
+
+### Admin account
+
+`admin@aminul.com` / `1234` is created automatically by `schema.sql` (email confirmed, full profile:
+username `admin`, display name "Aminul (Admin)", VIP crown 👑). The admin chats, calls and edits
+their own profile exactly like a normal user — everyone just sees the golden crown next to their name.
+Change the password after first login (Supabase Dashboard → Authentication → Users).
 
 ## 📱 Android APK & auto-releases
 

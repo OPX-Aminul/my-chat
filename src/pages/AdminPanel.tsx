@@ -8,7 +8,7 @@ import {
   adminStats,
 } from "../lib/api";
 import { BADGE_META, clockTime, timeAgo, type Badge, type Profile } from "../lib/types";
-import { Avatar, BadgeChip, Button, Input, Select, Spinner, toast } from "../components/ui";
+import { Avatar, BadgeChip, AdminCrown, Button, Input, Select, Spinner, toast } from "../components/ui";
 import { Search, ShieldAlert, Ban, CheckCircle2, Users, MessageSquare, Image, Phone, X } from "lucide-react";
 
 export default function AdminPanel({ onClose }: { onClose: () => void }) {
@@ -205,7 +205,10 @@ export default function AdminPanel({ onClose }: { onClose: () => void }) {
                 <Avatar name={m.sender?.display_name ?? "?"} url={m.sender?.avatar_url} size={32} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <p className="text-sm font-semibold text-white">{m.sender?.display_name ?? "Unknown"}</p>
+                    <p className="flex items-center gap-1 text-sm font-semibold text-white">
+                      {m.sender?.display_name ?? "Unknown"}
+                      {m.sender?.role === "admin" && <AdminCrown />}
+                    </p>
                     <span className="text-[10px] text-slate-500">{clockTime(m.created_at)} • {timeAgo(m.created_at)}</span>
                   </div>
                   <p className={`mt-0.5 break-words text-sm ${m.deleted_after_seen || m.deleted_before_seen ? "italic text-slate-500" : "text-slate-300"}`}>

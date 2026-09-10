@@ -64,6 +64,36 @@ export function BadgeChip({ badge }: { badge: Badge }) {
   );
 }
 
+/** Golden crown shown next to admin users' names everywhere. */
+export function AdminCrown({ className = "" }: { className?: string }) {
+  return (
+    <span
+      className={`inline-flex items-center ${className}`}
+      title="Admin"
+      aria-label="Admin"
+    >
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+        <path
+          d="M3 8l4.5 4L12 5l4.5 7L21 8l-1.6 10.5a2 2 0 0 1-2 1.5H6.6a2 2 0 0 1-2-1.5L3 8z"
+          fill="url(#crownGrad)"
+          stroke="#F59E0B"
+          strokeWidth="1.2"
+          strokeLinejoin="round"
+        />
+        <circle cx="3" cy="7" r="1.6" fill="#FCD34D" />
+        <circle cx="12" cy="4" r="1.6" fill="#FCD34D" />
+        <circle cx="21" cy="7" r="1.6" fill="#FCD34D" />
+        <defs>
+          <linearGradient id="crownGrad" x1="3" y1="4" x2="21" y2="20" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#FCD34D" />
+            <stop offset="1" stopColor="#F59E0B" />
+          </linearGradient>
+        </defs>
+      </svg>
+    </span>
+  );
+}
+
 export function Button({
   children,
   variant = "primary",

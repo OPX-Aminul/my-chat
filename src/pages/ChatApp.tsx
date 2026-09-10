@@ -29,7 +29,8 @@ import {
   viewStory,
 } from "../lib/api";
 import { useCallEngine } from "../lib/useCallEngine";
-import { Avatar, BadgeChip, Button, Input, Modal, Select, Spinner, toast } from "../components/ui";
+import { useBackgroundNotifier } from "../lib/useBackgroundNotifier";
+import { Avatar, BadgeChip, AdminCrown, Button, Input, Modal, Select, Spinner, toast } from "../components/ui";
 import CallOverlay from "../components/CallOverlay";
 import AdminPanel from "./AdminPanel";
 import {
@@ -40,7 +41,6 @@ import {
   Video,
   Send,
   Paperclip,
-  Smile,
   Search,
   LogOut,
   MoreVertical,
@@ -133,6 +133,8 @@ export default function ChatApp({
   const activeConvo = convos.find((c) => c.id === activeId) ?? null;
 
   const engine = useCallEngine(myId);
+
+  useBackgroundNotifier(myId);
 
   // ---------- data loading ----------
   async function loadConvos() {
@@ -448,7 +450,10 @@ export default function ChatApp({
                   />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <p className="truncate font-semibold text-slate-100">{c.name ?? "Chat"}</p>
+                      <p className="flex items-center gap-1 truncate font-semibold text-slate-100">
+                        {c.name ?? "Chat"}
+                        {c.kind === "dm" && c.peer?.role === "admin" && <AdminCrown />}
+                      </p>
                       <span className="shrink-0 text-[10px] text-slate-500">{timeAgo(c.last_message_at)}</span>
                     </div>
                     <p className="mt-0.5 truncate text-xs text-slate-500">
@@ -481,18 +486,20 @@ export default function ChatApp({
               </button>
               {stories.length === 0 && <EmptyHint text="No stories right now." />}
               {[...storiesByAuthor.entries()].map(([uid, list]) => (
-                <button
-                  key={uid}
-                  onClick={() => setStoryViewerStories(list)}
-                  className="mb-0.5 flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition hover:bg-white/5"
-                >
-                  <div className="rounded-full bg-gradient-to-tr from-cyan-400 via-indigo-500 to-fuchsia-500 p-[2.5px]">
-                    <Avatar name={list[0].author?.display_name ?? "?"} url={list[0].author?.avatar_url} size={42} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-semibold text-slate-100">
-                      {list[0].author?.display_name ?? "Someone"} {uid === myId && <span className="text-xs text-slate-500">(you)</span>}
-                    </p>
+              <button
+                key={uid}
+                onClick={() => setStoryViewerStories(list)}
+                className="mb-0.5 flex w-full items-center gap-3 rounded-xl px-2.5 py-2.5 text-left transition hover:bg-white/5"
+              >
+                <div className="rounded-full bg-gradient-to-tr from-cyan-400 via-indigo-500 to-fuchsia-500 p-[2.5px]">
+                  <Avatar name={list[0].author?.display_name ?? "?"} url={list[0].author?.avatar_url} size={42} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1 truncate font-semibold text-slate-100">
+                    {list[0].author?.display_name ?? "Someone"}
+                    {list[0].author?.role === "admin" && <AdminCrown />}
+                    {uid === myId && <span className="text-xs text-slate-500">(you)</span>}
+                  </p>
                     <p className="text-xs text-slate-500">
                       {list.length} story{list.length > 1 ? "s" : ""} • {timeAgo(list[0].created_at)}
                     </p>
@@ -555,6 +562,7 @@ export default function ChatApp({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <p className="truncate font-display font-bold text-white">{activeConvo.name ?? "Chat"}</p>
+                  {activeConvo.peer?.role === "admin" && <AdminCrown />}
                   {activeConvo.peer && <BadgeChip badge={activeConvo.peer.badge} />}
                   {activeConvo.kind === "channel" && (
                     <span className="rounded bg-indigo-500/20 px-1.5 py-0.5 text-[9px] font-bold text-indigo-300">CHANNEL</span>
@@ -570,6 +578,13 @@ export default function ChatApp({
               </div>
               {activeConvo.kind === "dm" && activeConvo.peer && (
                 <div className="flex items-center gap-1">
+                  <span
+                    className={`mr-1 hidden text-[11px] font-semibold sm:block ${
+                      onlineIds.has(activeConvo.peer.id) ? "text-emerald-300" : "text-slate-500"
+                    }`}
+                  >
+                    {onlineIds.has(activeConvo.peer.id) ? "In line" : "Offline"}
+                  </span>
                   <IconBtn
                     onClick={() =>
                       engine.placeCall(activeConvo.peer!, "audio", activeConvo.id).catch((e) =>
@@ -821,7 +836,10 @@ function UserRow({ profile: p, online, onClick }: { profile: Profile; online: bo
       <Avatar name={p.display_name} url={p.avatar_url} size={44} online={online} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5">
-          <p className="truncate font-semibold text-slate-100">{p.display_name}</p>
+          <p className="flex items-center gap-1 truncate font-semibold text-slate-100">
+            {p.display_name}
+            {p.role === "admin" && <AdminCrown />}
+          </p>
           <BadgeChip badge={p.badge} />
           {p.status === "banned" && (
             <span className="rounded bg-rose-500/20 px-1.5 py-0.5 text-[9px] font-bold text-rose-300">BANNED</span>
