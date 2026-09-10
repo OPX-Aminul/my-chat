@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
-import type { Profile } from "../lib/types";
+import type { Profile, Message } from "../lib/types";
 import { useOnlinePresence } from "../lib/hooks";
 import { timeAgo, clockTime } from "../lib/types";
 import {
@@ -49,6 +49,7 @@ import {
   ImageIcon,
   Plus,
   Pencil,
+  Copy,
   Trash2,
   Check,
   CheckCheck,
@@ -313,10 +314,12 @@ export default function ChatApp({
     <div className="flex h-full bg-[#070B14]">
       {/* ============ SIDEBAR ============ */}
       <aside
-        className={`${showList ? "flex" : "hidden"} h-full w-full flex-col border-r border-white/5 bg-[#0B1220] md:flex md:w-[340px]`}
+        className={`${
+          showList ? "flex slide-in-left" : "hidden"
+        } h-full w-full flex-col border-r border-white/5 bg-[#0B1220] md:flex md:w-[340px]`}
       >
         {/* header */}
-        <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
+        <div className="flex items-center justify-between border-b border-white/5 px-4 py-3 pt-safe">
           <div className="flex items-center gap-2.5">
             <div className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-cyan-400 to-indigo-500 font-display text-sm font-extrabold text-[#071018]">
               24
@@ -545,11 +548,15 @@ export default function ChatApp({
       </aside>
 
       {/* ============ CHAT AREA ============ */}
-      <main className={`${showList ? "hidden" : "flex"} h-full min-w-0 flex-1 flex-col md:flex`}>
+      <main
+        className={`${
+          showList ? "hidden" : "flex slide-in-right"
+        } h-full min-w-0 flex-1 flex-col md:flex`}
+      >
         {activeConvo ? (
           <>
             {/* chat header */}
-            <header className="flex items-center gap-3 border-b border-white/5 bg-[#0B1220] px-4 py-3">
+            <header className="flex items-center gap-3 border-b border-white/5 bg-[#0B1220] px-4 py-3 pt-safe">
               <button className="md:hidden text-slate-400" onClick={() => setShowList(true)}>
                 <ChevronLeft size={22} />
               </button>
@@ -677,7 +684,7 @@ export default function ChatApp({
             </div>
 
             {/* composer */}
-            <footer className="border-t border-white/5 bg-[#0B1220] px-4 py-3">
+            <footer className="border-t border-white/5 bg-[#0B1220] px-4 pb-safe pt-3">
               <div className="mx-auto flex max-w-3xl items-center gap-2">
                 <label className="cursor-pointer rounded-xl p-2.5 text-slate-400 transition hover:bg-white/5 hover:text-cyan-300">
                   <Paperclip size={19} />
@@ -873,17 +880,44 @@ function Bubble({
   onDeleteBefore: () => void;
   onDeleteAfter: () => void;
 }) {
-  const [menu, setMenu] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(m.content ?? "");
+  const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suppressClickRef = useRef(false);
   const seenByOther = (m.seen_by ?? []).some((id) => id !== myId);
   const deleted = m.deleted_before_seen || m.deleted_after_seen;
+  const editable = canEditMessage(m as unknown as Message, myId);
+
+  function startLongPress() {
+    longPressRef.current = setTimeout(() => {
+      suppressClickRef.current = true;
+      setSheetOpen(true);
+    }, 480);
+  }
+  function cancelLongPress() {
+    if (longPressRef.current) {
+      clearTimeout(longPressRef.current);
+      longPressRef.current = null;
+    }
+  }
 
   return (
     <div className={`group flex ${mine ? "justify-end" : "justify-start"}`}>
       <div className="relative max-w-[78%]">
         <div
-          className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-panel ${
+          onPointerDown={startLongPress}
+          onPointerUp={cancelLongPress}
+          onPointerLeave={cancelLongPress}
+          onPointerCancel={cancelLongPress}
+          onClick={() => {
+            if (suppressClickRef.current) {
+              suppressClickRef.current = false;
+              return;
+            }
+            if (mine && !deleted) setSheetOpen(true);
+          }}
+          className={`selectable rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-panel ${
             mine
               ? "rounded-br-md bg-gradient-to-br from-cyan-500/90 to-indigo-500/90 text-[#06121C]"
               : "rounded-bl-md bg-[#131C31] text-slate-100"
@@ -938,43 +972,63 @@ function Bubble({
           </div>
         </div>
 
-        {/* hover / long-press menu */}
-        {mine && !deleted && !editing && (
-          <div className="absolute -top-2 right-1 z-10 hidden group-hover:block">
-            <button
-              onClick={() => setMenu((v) => !v)}
-              className="glass rounded-lg p-1.5 text-slate-300 shadow-panel"
-              title="Message options"
-            >
-              <MoreVertical size={13} />
-            </button>
-            {menu && (
-              <div className="glass absolute right-0 top-8 z-20 w-52 overflow-hidden rounded-xl shadow-panel">
-                {canEditMessage(m as any, myId) && (
-                  <button
-                    onClick={() => { setMenu(false); setEditing(true); }}
-                    className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-xs font-medium text-slate-200 hover:bg-white/5"
-                  >
-                    <Pencil size={13} className="text-cyan-300" /> Edit (15 min window)
-                  </button>
-                )}
-                <button
-                  onClick={() => { setMenu(false); onDeleteBefore(); }}
-                  className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-xs font-medium text-slate-200 hover:bg-white/5"
-                >
-                  <Trash2 size={13} className="text-rose-300" /> Delete for everyone
-                </button>
-                <button
-                  onClick={() => { setMenu(false); onDeleteAfter(); }}
-                  className="flex w-full items-center gap-2 px-3.5 py-2.5 text-left text-xs font-medium text-slate-200 hover:bg-white/5"
-                >
-                  <Trash2 size={13} className="text-amber-300" /> Delete for me (after seen)
-                </button>
-              </div>
-            )}
-          </div>
-        )}
       </div>
+
+      {/* Action sheet (tap or long-press — native chat pattern) */}
+      {sheetOpen && mine && !deleted && (
+        <div className="fixed inset-0 z-[80] flex items-end justify-center" onClick={() => setSheetOpen(false)}>
+          <div className="absolute inset-0 bg-black/55 backdrop-blur-sm" />
+          <div
+            className="glass relative z-10 mb-6 w-[92vw] max-w-sm rounded-2xl pb-safe shadow-panel animate-fade-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-5 pb-2 pt-4 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              Message actions
+            </div>
+            {editable && (
+              <button
+                onClick={() => {
+                  setSheetOpen(false);
+                  setEditing(true);
+                }}
+                className="flex w-full items-center gap-3 border-t border-white/5 px-5 py-3.5 text-left text-sm font-medium text-slate-100 active:bg-white/5"
+              >
+                <Pencil size={16} className="text-cyan-300" /> Edit (15 min window)
+              </button>
+            )}
+            {m.content && (
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(m.content ?? "").catch(() => {});
+                  setSheetOpen(false);
+                  toast("Copied ✓", "ok");
+                }}
+                className="flex w-full items-center gap-3 border-t border-white/5 px-5 py-3.5 text-left text-sm font-medium text-slate-100 active:bg-white/5"
+              >
+                <Copy size={16} className="text-indigo-300" /> Copy text
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setSheetOpen(false);
+                onDeleteBefore();
+              }}
+              className="flex w-full items-center gap-3 border-t border-white/5 px-5 py-3.5 text-left text-sm font-medium text-rose-300 active:bg-white/5"
+            >
+              <Trash2 size={16} /> Delete for everyone
+            </button>
+            <button
+              onClick={() => {
+                setSheetOpen(false);
+                onDeleteAfter();
+              }}
+              className="flex w-full items-center gap-3 border-t border-white/5 px-5 py-3.5 text-left text-sm font-medium text-amber-300 active:bg-white/5"
+            >
+              <Trash2 size={16} /> Delete for me (after seen)
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

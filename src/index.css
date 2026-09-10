@@ -6,26 +6,74 @@
   color-scheme: dark;
 }
 
+/* ============================================================
+   APP SHELL — behaves like a native app frame, not a page
+   ============================================================ */
 html,
 body,
 #root {
   height: 100%;
 }
-
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+html {
+  touch-action: manipulation; /* no double-tap zoom delay */
+  overscroll-behavior: none;
+}
 body {
   margin: 0;
+  position: fixed; /* kills iOS rubber-band / whole-page scroll */
+  inset: 0;
+  overflow: hidden;
   font-family: "Inter", system-ui, sans-serif;
   background: #070b14;
   color: #e2e8f0;
   -webkit-font-smoothing: antialiased;
-  overscroll-behavior-y: none;
+  overscroll-behavior: none;
 }
 
-.font-display {
-  font-family: "Outfit", system-ui, sans-serif;
+/* Native-app touch behavior */
+* {
+  -webkit-tap-highlight-color: transparent; /* no gray flash on tap */
+}
+img,
+svg {
+  -webkit-touch-callout: none; /* no long-press save-image sheet */
+  -webkit-user-drag: none;
+  user-select: none;
+}
+button,
+a,
+label,
+nav,
+aside,
+header,
+footer {
+  user-select: none;
+  -webkit-user-select: none;
+}
+input,
+textarea,
+.selectable {
+  user-select: text;
+  -webkit-user-select: text; /* still copy-able where it matters */
 }
 
-/* scrollbars */
+/* App-style focus rings */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.55);
+  outline-offset: 2px;
+}
+
+/* Scrollbars: styled on desktop, hidden on touch */
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -36,6 +84,66 @@ body {
 }
 *::-webkit-scrollbar-track {
   background: transparent;
+}
+@media (pointer: coarse) {
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+  /* 16px inputs stop mobile browsers from zoom-jumping on focus */
+  input,
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Notch / gesture-bar safe areas */
+.pb-safe {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* View-transition animations (chat open, list back) */
+@keyframes slide-in-right {
+  from {
+    opacity: 0.4;
+    transform: translateX(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes slide-in-left {
+  from {
+    opacity: 0.4;
+    transform: translateX(-26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.slide-in-right {
+  animation: slide-in-right 0.22s ease-out both;
+}
+.slide-in-left {
+  animation: slide-in-left 0.22s ease-out both;
+}
+@keyframes loadingbar {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.font-display {
+  font-family: "Outfit", system-ui, sans-serif;
 }
 
 .glass {
